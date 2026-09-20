@@ -1,0 +1,900 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>FitTrack - 3D Spor Asistanın</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+        
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #0f172a; 
+            color: #f8fafc; 
+            -webkit-tap-highlight-color: transparent;
+            overflow: hidden; 
+        }
+
+        .app-container {
+            max-width: 480px;
+            margin: 0 auto;
+            height: 100vh; 
+            background-color: #0f172a;
+            position: relative;
+            display: flex;
+            flex-direction: column;
+            box-shadow: 0 0 20px rgba(0,0,0,0.5);
+        }
+
+        .no-scrollbar::-webkit-scrollbar {
+            display: none;
+        }
+        .no-scrollbar {
+            -ms-overflow-style: none;
+            scrollbar-width: none;
+        }
+
+        .fade-in {
+            animation: fadeIn 0.3s ease-in;
+        }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        /* Görsel Yükleniyor Göstergesi */
+        .img-container {
+            background-image: radial-gradient(circle at center, #ffffff 0%, #f1f5f9 100%);
+        }
+    </style>
+</head>
+<body class="bg-gray-950 flex justify-center text-slate-100">
+
+    <div id="app" class="app-container w-full overflow-hidden flex flex-col fade-in">
+        <!-- İçerik buraya yüklenecek -->
+    </div>
+
+    <!-- Genel Modal Kapsayıcısı -->
+    <div id="modal-root" class="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-md hidden opacity-0 transition-opacity duration-300 p-4">
+        <div id="modal-content" class="bg-slate-800 p-6 rounded-3xl shadow-2xl w-full max-w-sm max-h-[90vh] overflow-y-auto no-scrollbar transform transition-transform duration-300 scale-95 border border-slate-700">
+            <!-- Modal içeriği -->
+        </div>
+    </div>
+
+    <script>
+        const STORAGE_KEY = 'fittrack_data_v5'; // Çoklu seçim için versiyon güncellendi
+        
+        let state = {
+            isFirstLaunch: true,
+            currentView: 'onboarding',
+            streak: 0,
+            lastWorkoutDate: null,
+            schedule: {}, // Artık { 1: ['Göğüs', 'Sırt'], 2: ['Bacak'] } şeklinde array tutacak
+            weights: {},
+            reminderTime: '09:00'
+        };
+
+        function loadState() {
+            const saved = localStorage.getItem(STORAGE_KEY);
+            if (saved) {
+                try {
+                    state = { ...state, ...JSON.parse(saved) };
+                    if (!state.isFirstLaunch && state.currentView === 'onboarding') {
+                        state.currentView = 'home';
+                    }
+                } catch (e) {
+                    console.error("State yüklenemedi", e);
+                }
+            }
+        }
+
+        function saveState() {
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+        }
+
+        const GUNLER = [
+            { id: 1, ad: 'Pazartesi' }, { id: 2, ad: 'Salı' }, { id: 3, ad: 'Çarşamba' },
+            { id: 4, ad: 'Perşembe' }, { id: 5, ad: 'Cuma' }, { id: 6, ad: 'Cumartesi' }, { id: 0, ad: 'Pazar' }
+        ];
+
+        const KAS_GRUPLARI = ['Göğüs', 'Sırt', 'Kollar (Biceps & Triceps)', 'Omuz', 'Bacak', 'Karın (Core)', 'Tüm Vücut (Full Body)'];
+
+        const WARMUP_EXERCISES = [
+            { ad: 'Dinamik Esneme', sure: '1 Dakika' },
+            { ad: 'Eklem Rotasyonları', sure: '45 Saniye' }
+        ];
+
+        const EXERCISES = {
+            'Göğüs': [
+                { id: 'chest_press', name: 'Göğüs Press', desc: 'Ana göğüs kaslarını (Pectoralis Major) hedefler.', sets: 3, reps: 10, startWeight: 10, kcal: 45, 
+                  dbName: 'Dambıl Bench Press', macName: 'Chest Press Makinesi',
+                  dbTips: 'Dambılları indirirken dirseklerin gövdenle yaklaşık 45 derecelik açı yapmalı.',
+                  macTips: 'Sırtını koltuğa tam yasla. İtiş yaparken omuzlarını öne doğru çıkarma.',
+                  dbModel: 'https://fitnessprogramer.com/wp-content/uploads/2021/02/Dumbbell-Press.gif', 
+                  macModel: 'https://fitnessprogramer.com/wp-content/uploads/2021/02/Chest-Press-Machine.gif' },
+                { id: 'chest_fly', name: 'Göğüs Açış', desc: 'Göğüs ortasını esnetir ve çalıştırır.', sets: 3, reps: 12, startWeight: 5, kcal: 30, 
+                  dbName: 'Dambıl Fly', macName: 'Pec Deck Makinesi',
+                  dbTips: 'Hareket boyunca dirseklerini hafif bükülü tut.',
+                  macTips: 'Kolları çok geriye alıp omuzlarını zorlama. Kapattığında 1 saniye sık.',
+                  dbModel: 'https://fitnessprogramer.com/wp-content/uploads/2021/02/Dumbbell-Fly.gif', 
+                  macModel: 'https://fitnessprogramer.com/wp-content/uploads/2021/02/Pec-Deck-Fly.gif' }
+            ],
+            'Sırt': [
+                { id: 'lat_pull', name: 'Sırt Çekiş', desc: 'Kanat kaslarını hedefler.', sets: 3, reps: 10, startWeight: 15, kcal: 45, 
+                  dbName: 'Dambıl Row', macName: 'Lat Pulldown',
+                  dbTips: 'Sırtını düz tut. Dambılı göğsüne değil, kalçana doğru çek.',
+                  macTips: 'Barı göğüs kafesinin üst kısmına çek, belini çok geriye yatırma.',
+                  dbModel: 'https://fitnessprogramer.com/wp-content/uploads/2021/02/Dumbbell-Row.gif', 
+                  macModel: 'https://fitnessprogramer.com/wp-content/uploads/2021/02/Lat-Pulldown.gif' },
+                { id: 'cable_row', name: 'Yatay Çekiş', desc: 'Orta sırtı (Trapez ve Rhomboid) kalınlaştırır.', sets: 3, reps: 12, startWeight: 20, kcal: 40,
+                  dbName: 'Barbell Row', macName: 'Seated Cable Row',
+                  dbTips: 'Öne doğru eğilirken belini düz tut, ağırlığı karnına doğru çek.',
+                  macTips: 'Çekiş sırasında kürek kemiklerini birbirine yaklaştırıp sıkıştır.',
+                  dbModel: 'https://fitnessprogramer.com/wp-content/uploads/2021/02/Barbell-Row.gif', 
+                  macModel: 'https://fitnessprogramer.com/wp-content/uploads/2021/02/Seated-Cable-Row.gif' }
+            ],
+            'Kollar (Biceps & Triceps)': [
+                { id: 'biceps_curl', name: 'Pazı Bükme (Biceps)', desc: 'Ön kol (Biceps) kaslarını çalıştırır.', sets: 3, reps: 12, startWeight: 5, kcal: 25, 
+                  dbName: 'Dambıl Curl', macName: 'Cable Curl',
+                  dbTips: 'Dirseklerini gövdene yapışık tut. Belinden sallanarak güç alma.',
+                  macTips: 'Kabloyu çekerken bileklerini bükme, sadece dirseklerin hareket etsin.',
+                  dbModel: 'https://fitnessprogramer.com/wp-content/uploads/2021/02/Dumbbell-Curl.gif', 
+                  macModel: 'https://fitnessprogramer.com/wp-content/uploads/2021/02/Cable-Curl.gif' },
+                { id: 'triceps_ext', name: 'Arka Kol İtiş (Triceps)', desc: 'Triceps kaslarını izole eder.', sets: 3, reps: 12, startWeight: 10, kcal: 25, 
+                  dbName: 'Dambıl Triceps Ext.', macName: 'Triceps Pushdown',
+                  dbTips: 'Dirseklerini havada sabit tut, sadece ön kolun hareket etsin.',
+                  macTips: 'Dirseklerini vücudunun yanına yapıştır ve hareket boyunca ayırma.',
+                  dbModel: 'https://fitnessprogramer.com/wp-content/uploads/2021/02/Dumbbell-Triceps-Extension.gif', 
+                  macModel: 'https://fitnessprogramer.com/wp-content/uploads/2021/02/Pushdown.gif' }
+            ],
+            'Omuz': [
+                { id: 'shoulder_press', name: 'Omuz Press', desc: 'Ön ve orta omuz kasları.', sets: 3, reps: 10, startWeight: 10, kcal: 35, 
+                  dbName: 'Dambıl Shoulder Press', macName: 'Shoulder Press Makinesi',
+                  dbTips: 'Karın kaslarını sıkı tut, belini aşırı çukurlaştırma.',
+                  macTips: 'Makinenin kollarını omuz hizasına ayarla. Kontrollü yap.',
+                  dbModel: 'https://fitnessprogramer.com/wp-content/uploads/2021/02/Dumbbell-Shoulder-Press.gif', 
+                  macModel: 'https://fitnessprogramer.com/wp-content/uploads/2021/10/Machine-Shoulder-Press.gif' },
+                { id: 'lateral_raise', name: 'Yana Açış', desc: 'Omuzları geniş gösteren orta deltoid kası.', sets: 3, reps: 15, startWeight: 3, kcal: 20, 
+                  dbName: 'Dambıl Lateral Raise', macName: 'Cable Lateral Raise',
+                  dbTips: 'Ağırlığı kaldırırken dirseklerin hafif bükülü ve serçe parmağın yukarı baksın.',
+                  macTips: 'Kabloyu çaprazdan çekerek kas üzerindeki gerilimi sürekli tut.',
+                  dbModel: 'https://fitnessprogramer.com/wp-content/uploads/2021/02/Dumbbell-Lateral-Raise.gif', 
+                  macModel: 'https://fitnessprogramer.com/wp-content/uploads/2021/02/Cable-Lateral-Raise.gif' }
+            ],
+            'Bacak': [
+                { id: 'squat_press', name: 'Bacak İtiş (Quads)', desc: 'Üst bacak ve kalça.', sets: 3, reps: 12, startWeight: 20, kcal: 60, 
+                  dbName: 'Dambıl Squat', macName: 'Leg Press',
+                  dbTips: 'Ağırlığı her zaman topuklarına ver, dizler parmak ucunu geçmesin.',
+                  macTips: 'Ağırlığı ittiğinde dizlerini tamamen kilitleme (hafif bükülü kalsın).',
+                  dbModel: 'https://fitnessprogramer.com/wp-content/uploads/2021/02/Dumbbell-Squat.gif', 
+                  macModel: 'https://fitnessprogramer.com/wp-content/uploads/2021/02/Leg-Press.gif' },
+                { id: 'leg_curl', name: 'Arka Bacak (Hamstrings)', desc: 'Bacak arkası kaslarını izole eder.', sets: 3, reps: 12, startWeight: 15, kcal: 40,
+                  dbName: 'Dambıl RDL (Romanian Deadlift)', macName: 'Leg Curl Makinesi',
+                  dbTips: 'Kalçanı geriye doğru iterek bacak arkasındaki gerginliği hisset.',
+                  macTips: 'Makinede topuğunu kalçana kadar çek ve yavaşça geri bırak.',
+                  dbModel: 'https://fitnessprogramer.com/wp-content/uploads/2021/02/Dumbbell-Romanian-Deadlift.gif', 
+                  macModel: 'https://fitnessprogramer.com/wp-content/uploads/2021/02/Leg-Curl.gif' }
+            ],
+            'Karın (Core)': [
+                { id: 'crunch', name: 'Mekik (Crunch)', desc: 'Üst karın kaslarını (Rectus Abdominis) sıkar.', sets: 3, reps: 20, startWeight: 0, kcal: 20, 
+                  dbName: 'Vücut Ağırlığı Crunch', macName: 'Crunch Makinesi',
+                  dbTips: 'Boynundan çekme, hareketi sadece karın kaslarını sıkarak yap.',
+                  macTips: 'Makinede ağırlığı gövdeni bükerek aşağıya doğru çek.',
+                  dbModel: 'https://fitnessprogramer.com/wp-content/uploads/2021/02/Crunch.gif', 
+                  macModel: 'https://fitnessprogramer.com/wp-content/uploads/2021/02/Machine-Crunch.gif' },
+                { id: 'plank', name: 'Plank', desc: 'Tüm core (merkez) bölgesini güçlendirir.', sets: 3, reps: 60, startWeight: 0, kcal: 30, 
+                  dbName: 'Vücut Ağırlığı Plank', macName: 'Kablo Oduncu (Woodchopper)',
+                  dbTips: 'Sırtın dümdüz olsun, kalçanı çok kaldırma veya düşürme.',
+                  macTips: 'Kabloyu yukardan aşağı çapraz çekerken gövdeni döndürerek karın kaslarını sık.',
+                  dbModel: 'https://fitnessprogramer.com/wp-content/uploads/2021/02/Plank.gif', 
+                  macModel: 'https://fitnessprogramer.com/wp-content/uploads/2021/02/Cable-Woodchopper.gif' }
+            ],
+            'Tüm Vücut (Full Body)': [
+                { id: 'full_squat', name: 'Squat & Press', desc: 'Tüm vücudu çalıştıran bileşik hareket.', sets: 3, reps: 10, startWeight: 10, kcal: 70, 
+                  dbName: 'Dambıl Thruster', macName: 'Smith Machine Squat',
+                  dbTips: 'Squat\'tan kalkış anındaki ivmeyle dambılları yukarı it.',
+                  macTips: 'Ayaklarını omuz genişliğinde aç, barı trapez kaslarına oturt.',
+                  dbModel: 'https://fitnessprogramer.com/wp-content/uploads/2021/02/Dumbbell-Thruster.gif', 
+                  macModel: 'https://fitnessprogramer.com/wp-content/uploads/2021/02/Smith-Machine-Squat.gif' }
+            ]
+        };
+
+        function getExerciseById(id) {
+            for (const group in EXERCISES) {
+                const found = EXERCISES[group].find(ex => ex.id === id);
+                if (found) return found;
+            }
+            return null;
+        }
+
+        const appElement = document.getElementById('app');
+        const modalRoot = document.getElementById('modal-root');
+        const modalContent = document.getElementById('modal-content');
+
+        window.showModal = function(htmlContent) {
+            modalContent.innerHTML = htmlContent;
+            modalRoot.classList.remove('hidden');
+            setTimeout(() => {
+                modalRoot.classList.remove('opacity-0');
+                modalContent.classList.remove('scale-95');
+            }, 10);
+        }
+
+        window.closeModal = function() {
+            modalRoot.classList.add('opacity-0');
+            modalContent.classList.add('scale-95');
+            setTimeout(() => {
+                modalRoot.classList.add('hidden');
+                modalContent.innerHTML = '';
+            }, 300);
+        }
+
+        window.getWeight = function(exerciseId, defaultWeight) {
+            return state.weights[exerciseId] || defaultWeight;
+        }
+
+        window.render = function() {
+            appElement.innerHTML = ''; 
+            
+            if (state.currentView === 'onboarding') renderOnboarding();
+            else if (state.currentView === 'home') renderHome();
+            else if (state.currentView === 'guide') renderGuide();
+            else if (state.currentView === 'settings') renderSettings();
+            else if (state.currentView === 'edit_schedule') renderEditSchedule();
+        }
+
+        function renderOnboarding() {
+            const container = document.createElement('div');
+            container.className = 'flex-1 overflow-y-auto no-scrollbar p-6 flex flex-col fade-in pb-10';
+            
+            let dayCheckboxes = GUNLER.map(g => `
+                <div class="flex flex-col mb-3 bg-slate-900 border border-slate-700 rounded-xl overflow-hidden transition-all duration-300" id="day-card-${g.id}">
+                    <label class="flex items-center space-x-3 p-4 cursor-pointer">
+                        <input type="checkbox" value="${g.id}" id="cb-${g.id}" class="day-checkbox w-5 h-5 accent-orange-500 rounded bg-slate-800 border-slate-600">
+                        <span class="text-sm font-medium text-slate-200">${g.ad}</span>
+                    </label>
+                    <div id="select-wrapper-${g.id}" class="hidden px-4 pb-4 border-t border-slate-800 pt-3">
+                        <p class="text-xs text-slate-400 mb-3">Bu gün hangi bölgeleri çalışacaksın? <br/><span class="text-[10px] text-orange-400">(Birden fazla seçebilirsin)</span></p>
+                        <div class="flex flex-wrap gap-2">
+                            ${KAS_GRUPLARI.map(k => `
+                                <label class="cursor-pointer">
+                                    <input type="checkbox" value="${k}" class="peer hidden region-cb-${g.id}">
+                                    <div class="px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-800 text-slate-400 border border-slate-700 peer-checked:bg-orange-500/20 peer-checked:text-orange-400 peer-checked:border-orange-500 transition-all active:scale-95 select-none">
+                                        ${k}
+                                    </div>
+                                </label>
+                            `).join('')}
+                        </div>
+                    </div>
+                </div>
+            `).join('');
+
+            container.innerHTML = `
+                <div class="text-center mb-6 mt-4">
+                    <div class="mx-auto w-16 h-16 bg-orange-500/20 rounded-full flex items-center justify-center mb-4 shadow-[0_0_15px_rgba(249,115,22,0.3)]">
+                        <svg class="w-8 h-8 text-orange-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4"></path></svg>
+                    </div>
+                    <h1 class="text-2xl font-extrabold text-white mb-2">Programını Oluştur</h1>
+                    <p class="text-slate-400 text-sm">Spor yapacağın günleri ve çalışacağın bölgeleri seç.</p>
+                </div>
+                
+                <div class="w-full mb-8 text-left" id="onboarding-days">
+                    ${dayCheckboxes}
+                </div>
+                
+                <button id="btn-finish-setup" class="w-full bg-gradient-to-r from-orange-500 to-red-500 text-white font-bold py-4 rounded-xl shadow-lg shadow-orange-500/30 active:scale-95 transition-transform text-lg mb-6">
+                    Programı Kaydet ve Başla
+                </button>
+            `;
+            appElement.appendChild(container);
+
+            GUNLER.forEach(g => {
+                const cb = document.getElementById(`cb-${g.id}`);
+                const wrapper = document.getElementById(`select-wrapper-${g.id}`);
+                const card = document.getElementById(`day-card-${g.id}`);
+                
+                cb.addEventListener('change', (e) => {
+                    if(e.target.checked) {
+                        wrapper.classList.remove('hidden');
+                        card.classList.add('border-orange-500');
+                        card.classList.remove('border-slate-700');
+                    } else {
+                        wrapper.classList.add('hidden');
+                        card.classList.remove('border-orange-500');
+                        card.classList.add('border-slate-700');
+                    }
+                });
+            });
+
+            document.getElementById('btn-finish-setup').addEventListener('click', () => {
+                const selectedCheckboxes = document.querySelectorAll('.day-checkbox:checked');
+                
+                let isValid = true;
+                let hasAtLeastOneRegion = false;
+                state.schedule = {};
+
+                if(selectedCheckboxes.length === 0) {
+                    showModal(`
+                        <div class="text-center">
+                            <div class="w-16 h-16 bg-red-500/20 rounded-full flex items-center justify-center mx-auto mb-4">
+                                <span class="text-2xl">⚠️</span>
+                            </div>
+                            <h3 class="text-xl font-bold text-white mb-2">Uyarı</h3>
+                            <p class="text-sm text-slate-300 mb-6">Devam etmek için en az bir gün seçmelisin.</p>
+                            <button onclick="closeModal()" class="w-full bg-slate-700 hover:bg-slate-600 text-white font-bold py-3 rounded-xl transition-colors">Anladım</button>
+                        </div>
+                    `);
+                    return;
+                }
+
+                selectedCheckboxes.forEach(cb => {
+                    const dayId = parseInt(cb.value);
+                    const regionCheckboxes = document.querySelectorAll(`.region-cb-${dayId}:checked`);
+                    const selectedRegions = Array.from(regionCheckboxes).map(rcb => rcb.value);
+                    
+                    if(selectedRegions.length === 0) {
+                        isValid = false;
+                    } else {
+                        state.schedule[dayId] = selectedRegions;
+                        hasAtLeastOneRegion = true;
+                    }
+                });
+
+                if(!isValid || !hasAtLeastOneRegion) {
+                    showModal(`
+                        <div class="text-center">
+                            <div class="w-16 h-16 bg-orange-500/20 rounded-full flex items-center justify-center mx-auto mb-4">
+                                <span class="text-2xl">💪</span>
+                            </div>
+                            <h3 class="text-xl font-bold text-white mb-2">Eksik Seçim</h3>
+                            <p class="text-sm text-slate-300 mb-6">Lütfen seçtiğin günler için en az bir kas grubu belirle.</p>
+                            <button onclick="closeModal()" class="w-full bg-slate-700 hover:bg-slate-600 text-white font-bold py-3 rounded-xl transition-colors">Tamam</button>
+                        </div>
+                    `);
+                    return;
+                }
+
+                state.isFirstLaunch = false;
+                state.currentView = 'home';
+                saveState();
+                render();
+            });
+        }
+
+        function renderHome() {
+            const container = document.createElement('div');
+            container.className = 'flex-1 overflow-y-auto no-scrollbar p-6 pb-28 fade-in';
+            
+            const todayStr = new Date().toLocaleDateString('tr-TR', { weekday: 'long' });
+            const todayIndex = new Date().getDay();
+            const todayPlan = state.schedule[todayIndex]; // Artık array (Örn: ['Göğüs', 'Kollar (Biceps & Triceps)'])
+
+            let html = `
+                <div class="flex justify-between items-center mb-6">
+                    <div>
+                        <h2 class="text-slate-400 text-sm font-medium">Bugün, ${todayStr}</h2>
+                        <h1 class="text-2xl font-extrabold text-white">Özetin</h1>
+                    </div>
+                    <div class="bg-orange-500/20 px-3 py-1.5 rounded-xl border border-orange-500/30 flex items-center">
+                        <span class="text-orange-500 font-bold mr-1">🔥 ${state.streak}</span>
+                        <span class="text-xs text-orange-400">Gün</span>
+                    </div>
+                </div>
+
+                <div class="bg-slate-800 rounded-2xl p-5 mb-8 border border-slate-700 shadow-lg relative overflow-hidden">
+                    <div class="absolute -right-4 -top-4 w-24 h-24 bg-green-500/10 rounded-full blur-2xl"></div>
+                    <h3 class="text-white font-bold text-sm mb-4 flex items-center">
+                        <svg class="w-5 h-5 mr-1.5 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path></svg>
+                        Sabit Beslenme Hedefi
+                    </h3>
+                    <div class="flex justify-between items-end mb-4">
+                        <span class="text-4xl font-black text-white tracking-tight">2800 <span class="text-sm font-normal text-slate-400">kcal</span></span>
+                        <span class="text-xs text-slate-400 mb-1.5 bg-slate-900 px-2 py-1 rounded-md">Kilo koruma için</span>
+                    </div>
+                    <div class="grid grid-cols-3 gap-3 mt-4">
+                        <div class="bg-slate-900/80 rounded-xl p-2.5 text-center border border-slate-700/50">
+                            <span class="block text-[10px] text-slate-400 uppercase tracking-wider mb-1">Protein</span>
+                            <span class="block text-base font-bold text-blue-400">150g</span>
+                        </div>
+                        <div class="bg-slate-900/80 rounded-xl p-2.5 text-center border border-slate-700/50">
+                            <span class="block text-[10px] text-slate-400 uppercase tracking-wider mb-1">Karb</span>
+                            <span class="block text-base font-bold text-yellow-400">300g</span>
+                        </div>
+                        <div class="bg-slate-900/80 rounded-xl p-2.5 text-center border border-slate-700/50">
+                            <span class="block text-[10px] text-slate-400 uppercase tracking-wider mb-1">Yağ</span>
+                            <span class="block text-base font-bold text-red-400">80g</span>
+                        </div>
+                    </div>
+                </div>
+            `;
+
+            if (todayPlan && todayPlan.length > 0) {
+                html += `
+                    <div class="flex flex-col mb-4 mt-2">
+                        <h2 class="text-xl font-extrabold text-white mb-2">Günün Antrenmanı</h2>
+                        <div class="flex flex-wrap gap-2">
+                            ${todayPlan.map(p => `<span class="text-xs font-bold text-orange-400 bg-orange-500/10 border border-orange-500/20 px-2 py-1 rounded-md shadow-sm">${p}</span>`).join('')}
+                        </div>
+                    </div>
+                `;
+                
+                html += `<h4 class="text-xs font-bold text-slate-500 uppercase tracking-widest mb-3">Isınma</h4>`;
+                WARMUP_EXERCISES.forEach(w => {
+                    html += `
+                    <div class="bg-slate-800/40 rounded-xl p-3.5 mb-2.5 flex justify-between items-center border border-slate-700/30">
+                        <span class="text-sm font-medium text-slate-300 flex items-center">
+                            <span class="w-1.5 h-1.5 bg-yellow-500 rounded-full mr-2"></span>
+                            ${w.ad}
+                        </span>
+                        <span class="text-xs font-mono text-slate-400 bg-slate-900 px-2 py-0.5 rounded">${w.sure}</span>
+                    </div>`;
+                });
+
+                todayPlan.forEach(region => {
+                    html += `<h4 class="text-xs font-bold text-blue-400 uppercase tracking-widest mt-6 mb-3 border-b border-slate-700 pb-1">${region} Hareketleri</h4>`;
+                    const exList = EXERCISES[region] || [];
+                    exList.forEach(ex => {
+                        html += `
+                        <div onclick="openExerciseModal('${ex.id}')" class="group bg-slate-800 rounded-2xl p-4 mb-3 border border-slate-700 hover:border-orange-500/50 cursor-pointer transition-all flex items-center shadow-md hover:shadow-orange-500/10 active:scale-95">
+                            <div class="w-14 h-14 bg-slate-900 rounded-xl flex items-center justify-center mr-4 shadow-inner border border-slate-700/50 group-hover:scale-105 transition-transform text-xl">💪</div>
+                            <div class="flex-1">
+                                <h4 class="text-white font-bold text-sm mb-1">${ex.name}</h4>
+                                <div class="flex items-center text-xs text-slate-400 space-x-3">
+                                    <span>${ex.sets}x${ex.reps}</span>
+                                    <span class="text-orange-400 font-bold">${getWeight(ex.id, ex.startWeight)} ${ex.startWeight > 0 ? 'KG' : 'Sn/Tekrar'}</span>
+                                </div>
+                            </div>
+                            <div class="bg-slate-700 rounded-full p-1 group-hover:bg-orange-500 group-hover:text-white transition-colors text-slate-400">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path></svg>
+                            </div>
+                        </div>`;
+                    });
+                });
+
+                html += `
+                    <button onclick="finishWorkout()" class="w-full mt-6 bg-gradient-to-r from-orange-500 to-red-600 text-white font-bold py-4 rounded-xl shadow-lg shadow-orange-500/20 active:scale-95 transition-transform text-lg border border-orange-400/30">
+                        Antrenmanı Tamamla
+                    </button>
+                `;
+            } else {
+                html += `
+                    <div class="bg-slate-800/60 rounded-3xl p-10 text-center border border-slate-700 border-dashed mt-8 flex flex-col items-center">
+                        <div class="w-16 h-16 bg-slate-900 rounded-full flex items-center justify-center mb-4 text-3xl">🧘</div>
+                        <h3 class="text-white font-bold text-lg mb-2">Dinlenme Günü</h3>
+                        <p class="text-slate-400 text-sm">Kaslarının toparlanması için dinlenmek önemlidir. Beslenmene dikkat et.</p>
+                    </div>
+                `;
+            }
+
+            container.innerHTML = html;
+            appElement.appendChild(container);
+            appElement.appendChild(createBottomNav('home'));
+        }
+
+        window.openExerciseModal = function(exerciseId) {
+            const ex = getExerciseById(exerciseId);
+            if (!ex) return;
+
+            let currentMode = 'dumbbell'; 
+            
+            const renderModalContent = () => {
+                const currentName = currentMode === 'dumbbell' ? ex.dbName : ex.macName;
+                const currentTips = currentMode === 'dumbbell' ? ex.dbTips : ex.macTips;
+                const currentModelUrl = currentMode === 'dumbbell' ? ex.dbModel : ex.macModel;
+                
+                return `
+                <div class="relative pb-2">
+                    <button onclick="closeModal()" class="absolute -top-2 -right-2 p-2 bg-slate-700/80 hover:bg-red-500 rounded-full text-white z-10 transition-colors">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                    </button>
+                    
+                    <h3 class="text-xl font-extrabold text-white mb-1 pr-10">${ex.name}</h3>
+                    <p class="text-sm text-slate-400 mb-4 leading-relaxed">${ex.desc}</p>
+
+                    <div class="flex bg-slate-900 rounded-xl p-1 mb-4 border border-slate-700 shadow-inner">
+                        <button id="toggle-db" class="${currentMode === 'dumbbell' ? 'bg-slate-700 text-white shadow-md' : 'text-slate-500 hover:text-slate-300'} flex-1 py-2 text-sm font-bold rounded-lg transition-all active:scale-95">Serbest / Dambıl</button>
+                        <button id="toggle-mac" class="${currentMode === 'machine' ? 'bg-slate-700 text-white shadow-md' : 'text-slate-500 hover:text-slate-300'} flex-1 py-2 text-sm font-bold rounded-lg transition-all active:scale-95">Makine / Kablo</button>
+                    </div>
+
+                    <div class="text-center mb-3">
+                        <span class="text-[11px] font-bold text-orange-400 uppercase tracking-widest bg-orange-500/10 px-3 py-1.5 rounded-md border border-orange-500/20 shadow-sm">
+                            ${currentName}
+                        </span>
+                    </div>
+
+                    <!-- Gerçek İnsan Animasyonu (GIF) Görüntüleyici -->
+                    <div class="mb-5 relative w-full h-[260px] img-container rounded-xl overflow-hidden shadow-inner border-2 border-slate-600 flex items-center justify-center p-2">
+                        <img src="${currentModelUrl}" 
+                             class="w-full h-full object-contain filter contrast-105" 
+                             alt="${currentName} Animasyonu"
+                             onerror="this.onerror=null; this.src='https://placehold.co/400x300/f1f5f9/f97316?text=Animasyon+Yüklenemedi';">
+                    </div>
+
+                    <div class="bg-blue-900/20 border border-blue-500/30 rounded-xl p-3.5 mb-4 text-left shadow-sm">
+                        <h4 class="text-xs font-bold text-blue-400 uppercase tracking-widest mb-1.5 flex items-center">
+                            <svg class="w-4 h-4 mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                            Püf Noktası
+                        </h4>
+                        <p class="text-slate-300 text-sm leading-relaxed">
+                            ${currentTips}
+                        </p>
+                    </div>
+
+                    <div class="grid grid-cols-2 gap-3 mb-2">
+                        <div class="bg-slate-700/50 rounded-xl p-3 text-center border border-slate-600 shadow-sm">
+                            <span class="block text-slate-400 text-[10px] uppercase tracking-widest mb-1">Set x Tekrar</span>
+                            <span class="block text-white font-black text-xl">${ex.sets} x ${ex.reps}</span>
+                        </div>
+                        <div class="bg-slate-700/50 rounded-xl p-3 text-center border border-slate-600 shadow-sm">
+                            <span class="block text-slate-400 text-[10px] uppercase tracking-widest mb-1">Hedef Ağırlık</span>
+                            <span class="block text-orange-400 font-black text-xl">${getWeight(ex.id, ex.startWeight)} ${ex.startWeight > 0 ? 'KG' : ''}</span>
+                        </div>
+                    </div>
+                </div>
+            `};
+
+            showModal(renderModalContent());
+            
+            const setupToggleEvents = () => {
+                const btnDb = document.getElementById('toggle-db');
+                const btnMac = document.getElementById('toggle-mac');
+                
+                if(btnDb) btnDb.onclick = () => {
+                    if (currentMode !== 'dumbbell') {
+                        currentMode = 'dumbbell';
+                        document.getElementById('modal-content').innerHTML = renderModalContent();
+                        setupToggleEvents();
+                    }
+                };
+                
+                if(btnMac) btnMac.onclick = () => {
+                    if (currentMode !== 'machine') {
+                        currentMode = 'machine';
+                        document.getElementById('modal-content').innerHTML = renderModalContent();
+                        setupToggleEvents();
+                    }
+                };
+            };
+            setTimeout(setupToggleEvents, 50);
+        }
+
+        window.finishWorkout = function() {
+            const todayStr = new Date().toDateString();
+            const todayIndex = new Date().getDay();
+            const activePlans = state.schedule[todayIndex] || [];
+            
+            let totalKcalBurned = 50; // Isınma kalorisi baz değer
+            
+            // Tüm seçili bölgelerdeki hareketleri dön
+            activePlans.forEach(planName => {
+                const exercisesList = EXERCISES[planName] || [];
+                exercisesList.forEach(ex => {
+                    if(ex.startWeight > 0) { // Sadece ağırlıklı hareketlerde kilo artışı yap
+                        let current = getWeight(ex.id, ex.startWeight);
+                        state.weights[ex.id] = current + 2.5; 
+                    }
+                    totalKcalBurned += ex.kcal; 
+                });
+            });
+            
+            const targetKcal = 2800 + totalKcalBurned;
+
+            if (state.lastWorkoutDate !== todayStr) {
+                state.streak += 1;
+                state.lastWorkoutDate = todayStr;
+                saveState();
+            }
+
+            showModal(`
+                <div class="text-center p-2">
+                    <div class="text-5xl mb-3">🚀</div>
+                    <h3 class="text-2xl font-extrabold text-white mb-2">Harikasın!</h3>
+                    <p class="text-slate-300 text-sm mb-5 leading-relaxed">Antrenmanı tamamladın. Makineli ve serbest ağırlıklı hareketlerin hedefleri bir sonraki sefere <span class="text-orange-400 font-bold bg-orange-500/10 px-1 rounded">2.5kg</span> artırıldı.</p>
+                    
+                    <div class="grid grid-cols-2 gap-4 mb-5">
+                        <div class="bg-slate-900 rounded-xl p-4 border border-slate-700 shadow-inner">
+                            <span class="block text-slate-400 text-[10px] uppercase tracking-widest mb-1">Yakılan Kalori</span>
+                            <span class="block text-3xl font-black text-orange-500">${totalKcalBurned}</span>
+                        </div>
+                        <div class="bg-slate-900 rounded-xl p-4 border border-slate-700 shadow-inner">
+                            <span class="block text-slate-400 text-[10px] uppercase tracking-widest mb-1">Gün Serin</span>
+                            <span class="block text-3xl font-black text-white">${state.streak}</span>
+                        </div>
+                    </div>
+                    
+                    <div class="bg-slate-800 rounded-xl p-4 mb-6 border border-blue-500/30 text-left shadow-lg">
+                        <h4 class="text-sm font-bold text-white mb-3 flex items-center">
+                            <svg class="w-4 h-4 mr-1.5 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
+                            Kilo Kaybını Önleme Hedefi
+                        </h4>
+                        <div class="flex items-center justify-between font-mono text-sm bg-slate-950 p-3 rounded-lg border border-slate-800">
+                            <span class="text-slate-400 tracking-wider">2800 + ${totalKcalBurned}</span>
+                            <span class="text-xl font-bold text-green-400">= ${targetKcal}</span>
+                        </div>
+                        <p class="text-[11px] text-slate-400 mt-3 leading-relaxed">Kas kütleni korumak ve erimeyi engellemek için bugün bu kaloriye ulaşmalısın. İyi dinlen!</p>
+                    </div>
+
+                    <button onclick="closeModal(); render();" class="w-full bg-gradient-to-r from-blue-600 to-blue-500 text-white font-bold py-4 rounded-xl shadow-lg shadow-blue-500/30 active:scale-95 transition-all text-lg">Kapat ve Ana Sayfaya Dön</button>
+                </div>
+            `);
+        }
+
+        function renderGuide() {
+            const container = document.createElement('div');
+            container.className = 'flex-1 overflow-y-auto no-scrollbar p-6 pb-28 fade-in';
+            
+            let html = `<h1 class="text-2xl font-extrabold text-white mb-6">Tüm Hareketler Rehberi</h1>`;
+
+            for (const group in EXERCISES) {
+                html += `<h3 class="text-sm font-bold text-slate-400 uppercase tracking-widest mb-3 mt-6 border-b border-slate-800 pb-1">${group}</h3>`;
+                EXERCISES[group].forEach(ex => {
+                    html += `
+                    <div onclick="openExerciseModal('${ex.id}')" class="bg-slate-800 rounded-xl p-4 mb-3 border border-slate-700 cursor-pointer flex items-center hover:border-orange-500 transition-colors shadow-sm hover:shadow-orange-500/10 active:scale-95">
+                        <div class="w-12 h-12 bg-white rounded-lg flex items-center justify-center mr-4 text-2xl border-2 border-slate-600 overflow-hidden p-1 shadow-inner">
+                            <img src="${ex.dbModel}" class="w-full h-full object-contain filter grayscale opacity-80" onerror="this.onerror=null; this.src='https://placehold.co/100x100/f1f5f9/f97316?text=💪';">
+                        </div>
+                        <div class="flex-1">
+                            <h4 class="text-white font-bold text-sm">${ex.name}</h4>
+                            <p class="text-slate-400 text-[10px] mt-1 line-clamp-1">${ex.desc}</p>
+                        </div>
+                        <div class="bg-slate-900 rounded-full p-1 text-slate-500">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path></svg>
+                        </div>
+                    </div>`;
+                });
+            }
+            container.innerHTML = html;
+            appElement.appendChild(container);
+            appElement.appendChild(createBottomNav('guide'));
+        }
+
+        function renderSettings() {
+            const container = document.createElement('div');
+            container.className = 'flex-1 overflow-y-auto p-6 pb-28 fade-in';
+            container.innerHTML = `
+                <h1 class="text-2xl font-extrabold text-white mb-6">Ayarlar</h1>
+                
+                <div class="bg-slate-800 p-5 rounded-2xl border border-slate-700 shadow-md mb-4">
+                    <h3 class="text-white font-bold mb-3 flex items-center">
+                        <svg class="w-5 h-5 mr-2 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                        Günlük Hatırlatıcı
+                    </h3>
+                    <div class="flex items-center space-x-3">
+                        <input type="time" id="reminder-time-input" value="${state.reminderTime || '09:00'}" class="bg-slate-900 border border-slate-700 text-white text-lg rounded-xl focus:ring-blue-500 focus:border-blue-500 block w-full p-2.5">
+                        <button onclick="saveReminderTime()" class="bg-blue-600 hover:bg-blue-500 text-white font-bold py-2.5 px-4 rounded-xl transition-colors active:scale-95 whitespace-nowrap">Kaydet</button>
+                    </div>
+                    <p class="text-[11px] text-slate-400 mt-2">Her gün bu saatte spor vaktinin geldiğini hatırlatacağız.</p>
+                </div>
+
+                <div class="bg-slate-800 p-5 rounded-2xl border border-slate-700 shadow-md mb-4">
+                    <h3 class="text-white font-bold mb-2 flex items-center">
+                        <svg class="w-5 h-5 mr-2 text-orange-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01"></path></svg>
+                        Çalışma Programı
+                    </h3>
+                    <p class="text-[11px] text-slate-400 mb-4">Hangi gün, hangi bölgeyi çalışacağını değiştir.</p>
+                    <button onclick="window.navigate('edit_schedule')" class="w-full bg-slate-700 hover:bg-slate-600 text-white border border-slate-600 font-bold py-3 px-4 rounded-xl transition-colors active:scale-95 shadow-sm">Günleri ve Bölgeleri Düzenle</button>
+                </div>
+
+                <div class="bg-slate-800 p-5 rounded-2xl border border-slate-700 shadow-md">
+                    <h3 class="text-white font-bold mb-2 flex items-center">
+                        <svg class="w-5 h-5 mr-2 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                        Verileri Sıfırla
+                    </h3>
+                    <p class="text-[11px] text-slate-400 mb-5 leading-relaxed">Programın, serin ve ağırlık verilerin tamamen silinir. Uygulamayı ilk kez açıyormuş gibi kurulum ekranına geri dönersin.</p>
+                    <button onclick="confirmReset()" class="w-full bg-red-500/10 text-red-500 border border-red-500/50 font-bold py-3 px-4 rounded-xl hover:bg-red-500 hover:text-white transition-colors active:scale-95 shadow-sm">Tüm Verileri Sil ve Başa Dön</button>
+                </div>
+            `;
+            appElement.appendChild(container);
+            appElement.appendChild(createBottomNav('settings'));
+        }
+
+        window.saveReminderTime = function() {
+            const time = document.getElementById('reminder-time-input').value;
+            state.reminderTime = time;
+            saveState();
+            showModal(`
+                <div class="text-center p-2">
+                    <div class="w-16 h-16 bg-green-500/20 rounded-full flex items-center justify-center mx-auto mb-4 text-3xl">✅</div>
+                    <h3 class="text-xl font-extrabold text-white mb-2">Kaydedildi</h3>
+                    <p class="text-sm text-slate-300 mb-6">Hatırlatıcı saatin <strong>${time}</strong> olarak güncellendi.</p>
+                    <button onclick="closeModal()" class="w-full bg-slate-700 hover:bg-slate-600 text-white font-bold py-3 rounded-xl transition-colors">Tamam</button>
+                </div>
+            `);
+        }
+
+        function renderEditSchedule() {
+            const container = document.createElement('div');
+            container.className = 'flex-1 overflow-y-auto no-scrollbar p-6 flex flex-col fade-in pb-28';
+            
+            let dayCheckboxes = GUNLER.map(g => {
+                const isSelected = state.schedule[g.id] && state.schedule[g.id].length > 0;
+                const selectedRegions = state.schedule[g.id] || [];
+                
+                return `
+                <div class="flex flex-col mb-3 ${isSelected ? 'bg-slate-900 border-orange-500' : 'bg-slate-900 border-slate-700'} border rounded-xl overflow-hidden transition-all duration-300" id="edit-day-card-${g.id}">
+                    <label class="flex items-center space-x-3 p-4 cursor-pointer">
+                        <input type="checkbox" value="${g.id}" id="edit-cb-${g.id}" ${isSelected ? 'checked' : ''} class="edit-day-checkbox w-5 h-5 accent-orange-500 rounded bg-slate-800 border-slate-600">
+                        <span class="text-sm font-medium text-slate-200">${g.ad}</span>
+                    </label>
+                    <div id="edit-select-wrapper-${g.id}" class="${isSelected ? '' : 'hidden'} px-4 pb-4 border-t border-slate-800 pt-3">
+                        <p class="text-xs text-slate-400 mb-3">Hangi bölgeleri çalışacaksın?</p>
+                        <div class="flex flex-wrap gap-2">
+                            ${KAS_GRUPLARI.map(k => `
+                                <label class="cursor-pointer">
+                                    <input type="checkbox" value="${k}" ${selectedRegions.includes(k) ? 'checked' : ''} class="peer hidden edit-region-cb-${g.id}">
+                                    <div class="px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-800 text-slate-400 border border-slate-700 peer-checked:bg-orange-500/20 peer-checked:text-orange-400 peer-checked:border-orange-500 transition-all active:scale-95 select-none">
+                                        ${k}
+                                    </div>
+                                </label>
+                            `).join('')}
+                        </div>
+                    </div>
+                </div>
+            `}).join('');
+
+            container.innerHTML = `
+                <div class="flex items-center mb-6 mt-2">
+                    <button onclick="window.navigate('settings')" class="text-slate-400 hover:text-white mr-3 active:scale-90 transition-transform">
+                        <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"></path></svg>
+                    </button>
+                    <h1 class="text-2xl font-extrabold text-white">Programı Düzenle</h1>
+                </div>
+                
+                <div class="w-full mb-6 text-left" id="edit-schedule-days">
+                    ${dayCheckboxes}
+                </div>
+                
+                <button id="btn-save-schedule" class="w-full bg-gradient-to-r from-orange-500 to-red-500 text-white font-bold py-4 rounded-xl shadow-lg shadow-orange-500/30 active:scale-95 transition-transform text-lg mb-6">
+                    Değişiklikleri Kaydet
+                </button>
+            `;
+            appElement.appendChild(container);
+
+            GUNLER.forEach(g => {
+                const cb = document.getElementById(`edit-cb-${g.id}`);
+                const wrapper = document.getElementById(`edit-select-wrapper-${g.id}`);
+                const card = document.getElementById(`edit-day-card-${g.id}`);
+                
+                if(cb) {
+                    cb.addEventListener('change', (e) => {
+                        if(e.target.checked) {
+                            wrapper.classList.remove('hidden');
+                            card.classList.add('border-orange-500');
+                            card.classList.remove('border-slate-700');
+                        } else {
+                            wrapper.classList.add('hidden');
+                            card.classList.remove('border-orange-500');
+                            card.classList.add('border-slate-700');
+                        }
+                    });
+                }
+            });
+
+            document.getElementById('btn-save-schedule').addEventListener('click', () => {
+                const selectedCheckboxes = document.querySelectorAll('.edit-day-checkbox:checked');
+                
+                let isValid = true;
+                let hasAtLeastOneRegion = false;
+                let newSchedule = {};
+
+                if(selectedCheckboxes.length === 0) {
+                    showModal(`
+                        <div class="text-center">
+                            <div class="w-16 h-16 bg-red-500/20 rounded-full flex items-center justify-center mx-auto mb-4">
+                                <span class="text-2xl">⚠️</span>
+                            </div>
+                            <h3 class="text-xl font-bold text-white mb-2">Uyarı</h3>
+                            <p class="text-sm text-slate-300 mb-6">Lütfen en az bir gün seç.</p>
+                            <button onclick="closeModal()" class="w-full bg-slate-700 hover:bg-slate-600 text-white font-bold py-3 rounded-xl transition-colors">Anladım</button>
+                        </div>
+                    `);
+                    return;
+                }
+
+                selectedCheckboxes.forEach(cb => {
+                    const dayId = parseInt(cb.value);
+                    const regionCheckboxes = document.querySelectorAll(`.edit-region-cb-${dayId}:checked`);
+                    const selectedRegions = Array.from(regionCheckboxes).map(rcb => rcb.value);
+                    
+                    if(selectedRegions.length === 0) {
+                        isValid = false;
+                    } else {
+                        newSchedule[dayId] = selectedRegions;
+                        hasAtLeastOneRegion = true;
+                    }
+                });
+
+                if(!isValid || !hasAtLeastOneRegion) {
+                    showModal(`
+                        <div class="text-center">
+                            <div class="w-16 h-16 bg-orange-500/20 rounded-full flex items-center justify-center mx-auto mb-4">
+                                <span class="text-2xl">💪</span>
+                            </div>
+                            <h3 class="text-xl font-bold text-white mb-2">Eksik Seçim</h3>
+                            <p class="text-sm text-slate-300 mb-6">Lütfen seçtiğin günler için en az bir kas grubu belirle.</p>
+                            <button onclick="closeModal()" class="w-full bg-slate-700 hover:bg-slate-600 text-white font-bold py-3 rounded-xl transition-colors">Tamam</button>
+                        </div>
+                    `);
+                    return;
+                }
+
+                state.schedule = newSchedule;
+                saveState();
+                
+                showModal(`
+                    <div class="text-center">
+                        <div class="w-16 h-16 bg-green-500/20 rounded-full flex items-center justify-center mx-auto mb-4">
+                            <span class="text-2xl">✅</span>
+                        </div>
+                        <h3 class="text-xl font-bold text-white mb-2">Başarılı</h3>
+                        <p class="text-sm text-slate-300 mb-6">Programın başarıyla güncellendi!</p>
+                        <button onclick="closeModal(); window.navigate('settings');" class="w-full bg-slate-700 hover:bg-slate-600 text-white font-bold py-3 rounded-xl transition-colors">Tamam</button>
+                    </div>
+                `);
+            });
+            
+            appElement.appendChild(createBottomNav('settings'));
+        }
+
+        // Özel Confirm Modalı
+        window.confirmReset = function() {
+            showModal(`
+                <div class="text-center p-2">
+                    <div class="w-16 h-16 bg-red-500/20 rounded-full flex items-center justify-center mx-auto mb-4 text-3xl">🗑️</div>
+                    <h3 class="text-xl font-extrabold text-white mb-2">Emin misin?</h3>
+                    <p class="text-sm text-slate-300 mb-6 leading-relaxed">Tüm verilerin kalıcı olarak silinecek ve başa döneceksin. Bu işlem geri alınamaz.</p>
+                    <div class="flex space-x-3">
+                        <button onclick="closeModal()" class="flex-1 bg-slate-700 hover:bg-slate-600 text-white font-bold py-3 rounded-xl transition-colors active:scale-95">İptal</button>
+                        <button onclick="executeReset()" class="flex-1 bg-red-600 hover:bg-red-500 text-white font-bold py-3 rounded-xl transition-colors shadow-lg shadow-red-600/30 active:scale-95">Evet, Sil</button>
+                    </div>
+                </div>
+            `);
+        }
+
+        window.executeReset = function() {
+            localStorage.removeItem(STORAGE_KEY);
+            location.reload();
+        }
+
+        function createBottomNav(activeTab) {
+            const nav = document.createElement('div');
+            nav.className = 'absolute bottom-0 w-full bg-slate-950/90 backdrop-blur-lg border-t border-slate-800 z-40 pb-safe';
+            const getClasses = (t) => activeTab === t ? 'text-orange-500 scale-110' : 'text-slate-500 hover:text-slate-300';
+            nav.innerHTML = `
+                <div class="flex justify-around items-center py-3 px-2">
+                    <button onclick="window.navigate('home')" class="flex flex-col items-center ${getClasses('home')} transition-all active:scale-95">
+                        <svg class="w-6 h-6 mb-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"></path></svg>
+                        <span class="text-[10px] font-bold">Ana Sayfa</span>
+                    </button>
+                    <button onclick="window.navigate('guide')" class="flex flex-col items-center ${getClasses('guide')} transition-all active:scale-95">
+                        <svg class="w-6 h-6 mb-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 10h16M4 14h16M4 18h16"></path></svg>
+                        <span class="text-[10px] font-bold">Rehber</span>
+                    </button>
+                    <button onclick="window.navigate('settings')" class="flex flex-col items-center ${getClasses('settings')} transition-all active:scale-95">
+                        <svg class="w-6 h-6 mb-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
+                        <span class="text-[10px] font-bold">Ayarlar</span>
+                    </button>
+                </div>
+            `;
+            return nav;
+        }
+
+        window.navigate = function(view) {
+            if (state.currentView !== view) {
+                state.currentView = view;
+                render();
+            }
+        }
+
+        document.addEventListener('DOMContentLoaded', () => {
+            loadState();
+            render();
+        });
+
+    </script>
+</body>
+</html>
