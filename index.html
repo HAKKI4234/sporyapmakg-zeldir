@@ -72,16 +72,16 @@
     </div>
 
     <script>
-        const STORAGE_KEY = 'fittrack_data_v5'; // Çoklu seçim için versiyon güncellendi
+        const STORAGE_KEY = 'fittrack_data_v5'; 
         
         let state = {
             isFirstLaunch: true,
             currentView: 'onboarding',
             streak: 0,
             lastWorkoutDate: null,
-            schedule: {}, // Artık { 1: ['Göğüs', 'Sırt'], 2: ['Bacak'] } şeklinde array tutacak
+            schedule: {}, 
             weights: {},
-            reminderTimes: ['09:00'] // Çoklu hatırlatıcı için dizi (array) yapıldı
+            reminderTimes: ['09:00'] 
         };
 
         function loadState() {
@@ -89,13 +89,14 @@
             if (saved) {
                 try {
                     const parsed = JSON.parse(saved);
-                    // Eski sürümden kalan tekli reminderTime varsa diziye çevir (Göç/Migration işlemi)
                     if (parsed.reminderTime && !parsed.reminderTimes) {
                         parsed.reminderTimes = [parsed.reminderTime];
                         delete parsed.reminderTime;
                     }
                     state = { ...state, ...parsed };
-                    if (!state.isFirstLaunch && state.currentView === 'onboarding') {
+                    
+                    // Eğer kurulum daha önce yapılmışsa, kullanıcı uygulamayı her açtığında doğrudan Ana Sayfa ile başlasın.
+                    if (!state.isFirstLaunch) {
                         state.currentView = 'home';
                     }
                 } catch (e) {
@@ -107,6 +108,23 @@
         function saveState() {
             localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
         }
+
+        let lastCheckedDay = new Date().getDay();
+        function checkDayChange() {
+            const currentDay = new Date().getDay();
+            if (currentDay !== lastCheckedDay) {
+                lastCheckedDay = currentDay;
+                if (!state.isFirstLaunch && state.currentView === 'home') {
+                    render(); // Gün değiştiyse ana sayfayı otomatik tazele
+                }
+            }
+        }
+        // Kullanıcı uygulamayı arka plandan tekrar açtığında veya sekmeye döndüğünde günü kontrol et
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'visible') {
+                checkDayChange();
+            }
+        });
 
         const GUNLER = [
             { id: 1, ad: 'Pazartesi' }, { id: 2, ad: 'Salı' }, { id: 3, ad: 'Çarşamba' },
@@ -949,6 +967,9 @@
         document.addEventListener('DOMContentLoaded', () => {
             loadState();
             render();
+            
+            // Periyodik olarak gün değişimini kontrol et
+            setInterval(checkDayChange, 60000); 
         });
 
     </script>
